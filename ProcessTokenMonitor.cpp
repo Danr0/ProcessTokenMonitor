@@ -11,6 +11,9 @@
 #include <process.h>
 #include <strsafe.h>
 #include <sddl.h>
+#include <tlhelp32.h>
+#include <string>
+#include <comdef.h>
 
 BOOL WINAPI consoleHandler(DWORD signal) {
 
@@ -81,6 +84,33 @@ bool cmdOptionExists(char** begin, char** end, const std::string& option)
 	return std::find(begin, end, option) != end;
 }
 
+
+DWORD GetProcessIdByName(char* ProcName) {
+	PROCESSENTRY32 entry;
+	entry.dwSize = sizeof(PROCESSENTRY32);
+
+	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
+
+	if (Process32First(snapshot, &entry) == TRUE)
+	{
+		while (Process32Next(snapshot, &entry) == TRUE)
+		{
+			const WCHAR* tmp_wc = entry.szExeFile;
+			_bstr_t tmp_wc2(tmp_wc);
+			const char* exec_filename = tmp_wc2;
+			if (_stricmp(exec_filename, ProcName) == 0)
+			{
+				DWORD pid = entry.th32ProcessID;
+				CloseHandle(snapshot);
+				//CloseHandle(hProcess);
+				return pid;
+			}
+		}
+	}
+	printf("[-] ERROR: can't find process %s\n", ProcName);
+	ExitProcess(-1);
+	
+}
 
 BOOL CheckWindowsPrivilege(HANDLE hToken, const TCHAR* Privilege)
 {
@@ -169,6 +199,9 @@ int main(int argc, char* argv[])
 	std::cout << "***  Monitor programm token  ***\n";
 	std::cout << "*******   Made by Danr0  *******\n";
 
+	// Check for admin context
+	contextCheck();
+
 	// Set console handler
 	if (!SetConsoleCtrlHandler(consoleHandler, TRUE)) {
 		printf("[-] ERROR: Could not set control handler");
@@ -179,36 +212,57 @@ int main(int argc, char* argv[])
 	{
 		std::cout << "Provide argument via startup arguments\n"
 			<< "-p  pid to monitor\n"
-			<< "-t  sleep time between checks (default 10 s) \n";
+			<< "-t  sleep time between checks (default 10 s) \n"
+			<< "--defender  find and monitor MsMpEng.exe process\n";
 		ExitProcess(-1);
 	}
-
-	// Get pid to monitor 
-	if (!cmdOptionExists(argv, argv + argc, "-p"))
-	{
-		std::cout << "[!] No require -p argument\n";
-		ExitProcess(-1);
-	}
-	char* pid_str = getCmdOption(argv, argv + argc, "-p");
-	DWORD pid = strtoul(pid_str, NULL, 10);
-	printf("Target PID: %d\n", pid);
 
 	// Set time to sleep, default 1s
-	int time_to_sleep = 10000;
+	int time_to_sleep = 10000; // default value
 	if (cmdOptionExists(argv, argv + argc, "-t"))
 	{
-		time_to_sleep = atoi(getCmdOption(argv, argv + argc, "-t"));
+		char* arg_time = getCmdOption(argv, argv + argc, "-t");
+		if (arg_time == nullptr)
+		{
+			printf("Invalid -t argumet");
+			ExitProcess(-1);
+		}
+		time_to_sleep = atoi(arg_time);
 	}
 
-	// Check for admin context
-	contextCheck();
+	// Check args
+	if (!cmdOptionExists(argv, argv + argc, "-p") && !cmdOptionExists(argv, argv + argc, "--defender"))
+	{
+		std::cout << "[!] No require -p or --defender arguments\n";
+		ExitProcess(-1);
+	}
 
-	// Get token of process
+	DWORD pid;
+	// If no pid provided, get by name
+	if (!cmdOptionExists(argv, argv + argc, "-p"))
+	{
+		pid = GetProcessIdByName((char*)"MsMpEng.exe");
+	}
+	else 
+	{
+		char* pid_str = getCmdOption(argv, argv + argc, "-p");
+		if (pid_str == nullptr)
+		{
+			printf("Invalid -p argumet");
+			ExitProcess(-1);
+		}
+		pid = strtoul(pid_str, NULL, 10);
+		
+	}
+	printf("Target PID: %d\n", pid);
+
+	// Get token of process by pid
 	HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
 	if (hProcess == NULL) {
 		printf("OpenProcess() error : % u\n", GetLastError());
 		ExitProcess(-1);
 	}
+
 	printf("Process opened succeed!\n");
 	HANDLE hToken;
 	if (!OpenProcessToken(hProcess, TOKEN_QUERY, &hToken)) {
