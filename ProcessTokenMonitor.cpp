@@ -156,6 +156,35 @@ int GetUserAndGroupsCount(HANDLE hToken)
 		
 };
 
+int CapabilitiesCount(HANDLE hToken)
+{
+	// Users and groups count check
+	DWORD dwSize = 0, dwResult = 0;
+	PTOKEN_GROUPS pGroupInfo;
+	SID_IDENTIFIER_AUTHORITY SIDAuth = SECURITY_NT_AUTHORITY;
+
+	if (!GetTokenInformation(hToken, TokenCapabilities, NULL, dwSize, &dwSize))
+	{
+		dwResult = GetLastError();
+		if (dwResult != ERROR_INSUFFICIENT_BUFFER) {
+			printf("[-] GetTokenInformation Error %u\n", dwResult);
+		}
+	}
+	// Allocate the buffer.
+	pGroupInfo = (PTOKEN_GROUPS)GlobalAlloc(GPTR, dwSize);
+
+	// Call GetTokenInformation again to get the group information.
+	BOOL res = GetTokenInformation(hToken, TokenCapabilities, pGroupInfo, dwSize, &dwSize);
+	if (res && pGroupInfo != nullptr)
+		return pGroupInfo->GroupCount;
+	else
+	{
+		printf("[-] GetTokenInformation Error %u\n", GetLastError());
+		return 0;
+	}
+
+};
+
 DWORD GetIntegrityLevel(HANDLE hToken) {
 	// Integrity check
 	DWORD dwSize = 0, dwResult = 0;
@@ -181,18 +210,6 @@ DWORD GetIntegrityLevel(HANDLE hToken) {
 
 };
 
-DWORD GetSessionID(HANDLE hToken) {
-	DWORD dwSize = 0, dwResult = 0;
-	DWORD token_session_id = -1;
-	if (!GetTokenInformation(hToken, TokenSessionId, nullptr, 0, &token_session_id))
-	{
-		dwResult = GetLastError();
-		if (dwResult != ERROR_INSUFFICIENT_BUFFER) {
-			printf("[-] GetTokenInformation Error %u\n", dwResult);
-		}
-	}
-	return token_session_id;
-}
 
 int main(int argc, char* argv[])
 {
@@ -256,61 +273,79 @@ int main(int argc, char* argv[])
 	}
 	printf("Target PID: %d\n", pid);
 
-	// Get token of process by pid
-	HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
-	if (hProcess == NULL) {
-		printf("OpenProcess() error : % u\n", GetLastError());
-		ExitProcess(-1);
-	}
-
-	printf("Process opened succeed!\n");
+	BOOL starting_is_debug, starting_audit, starting_impersonate, starting_security, starting_restore;
+	int starting_count, starting_cap_count;
+	DWORD starting_intlvl;
 	HANDLE hToken;
-	if (!OpenProcessToken(hProcess, TOKEN_QUERY, &hToken)) {
-		printf("[-] OpenProcessToken() error : % u\n", GetLastError());
-		ExitProcess(-1);
+
+	//Defender default attributes
+	if (cmdOptionExists(argv, argv + argc, "--defender"))
+	{
+		starting_is_debug = TRUE;
+		starting_impersonate = TRUE;
+		starting_security = TRUE;
+		starting_restore = TRUE;
+		starting_audit = FALSE;
+		starting_count = 11;
+		starting_intlvl = SECURITY_MANDATORY_HIGH_RID;
+		starting_cap_count = 0;
 	}
-	printf("Open process token succeed!\n");
+	else
+	{
+		// Get token of process by pid
+		HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+		if (hProcess == NULL) {
+			printf("OpenProcess() error : % u\n", GetLastError());
+			ExitProcess(-1);
+		}
+		printf("Process opened succeed!\n");
+		if (!OpenProcessToken(hProcess, TOKEN_QUERY, &hToken)) {
+			printf("[-] OpenProcessToken() error : % u\n", GetLastError());
+			ExitProcess(-1);
+		}
+		printf("Open process token succeed!\n");
 
-	// Privileges from https://docs.microsoft.com/en-us/windows/win32/secauthz/privilege-constants
-	BOOL starting_is_debug = CheckWindowsPrivilege(hToken, SE_DEBUG_NAME);
-	printf("Debug privilege %d\n", starting_is_debug);
-	BOOL starting_impersonate = CheckWindowsPrivilege(hToken, SE_IMPERSONATE_NAME);
-	printf("Impersonate privilege %d\n", starting_impersonate);
-	BOOL starting_security = CheckWindowsPrivilege(hToken, SE_SECURITY_NAME);
-	printf("Security privilege %d\n", starting_security);
-	BOOL starting_restore = CheckWindowsPrivilege(hToken, SE_RESTORE_NAME);
-	printf("Restore privilege %d\n", starting_restore);
-	BOOL starting_audit = CheckWindowsPrivilege(hToken, SE_AUDIT_NAME);
-	printf("Audit privilege %d\n", starting_audit);
+		// Privileges from https://docs.microsoft.com/en-us/windows/win32/secauthz/privilege-constants
+		starting_is_debug = CheckWindowsPrivilege(hToken, SE_DEBUG_NAME);
+		printf("Debug privilege %d\n", starting_is_debug);
+		starting_impersonate = CheckWindowsPrivilege(hToken, SE_IMPERSONATE_NAME);
+		printf("Impersonate privilege %d\n", starting_impersonate);
+		starting_security = CheckWindowsPrivilege(hToken, SE_SECURITY_NAME);
+		printf("Security privilege %d\n", starting_security);
+		starting_restore = CheckWindowsPrivilege(hToken, SE_RESTORE_NAME);
+		printf("Restore privilege %d\n", starting_restore);
+		starting_audit = CheckWindowsPrivilege(hToken, SE_AUDIT_NAME);
+		printf("Audit privilege %d\n", starting_audit);
 
-	// GetUserAndGroupsCount
-	int starting_count = GetUserAndGroupsCount(hToken);
-	printf("Total User and Groups count: %d\n", starting_count);
+		// GetUserAndGroupsCount
+		starting_count = GetUserAndGroupsCount(hToken);
+		printf("Total User and Groups count: %d\n", starting_count);
 
-	// IntegrityLevel
-	DWORD starting_intlvl = GetIntegrityLevel(hToken);
-	printf("Inetgrity: %lu\n", starting_intlvl);
-	if (starting_intlvl < SECURITY_MANDATORY_LOW_RID)
-		printf("UNTRUSTED_INTEGRITY\n");
+		// GetUserAndGroupsCount
+		starting_cap_count = CapabilitiesCount(hToken);
+		printf("Capabilities count: %d\n", starting_cap_count);
 
-	if (starting_intlvl < SECURITY_MANDATORY_MEDIUM_RID)
-		printf("LOW_INTEGRITY\n");
+		// IntegrityLevel
+		starting_intlvl = GetIntegrityLevel(hToken);
+		printf("Inetgrity: %lu\n", starting_intlvl);
+		if (starting_intlvl < SECURITY_MANDATORY_LOW_RID)
+			printf("UNTRUSTED_INTEGRITY\n");
 
-	if (starting_intlvl >= SECURITY_MANDATORY_MEDIUM_RID &&
-		starting_intlvl < SECURITY_MANDATORY_HIGH_RID) {
-		printf("MEDIUM_INTEGRITY\n");
+		if (starting_intlvl < SECURITY_MANDATORY_MEDIUM_RID)
+			printf("LOW_INTEGRITY\n");
+
+		if (starting_intlvl >= SECURITY_MANDATORY_MEDIUM_RID &&
+			starting_intlvl < SECURITY_MANDATORY_HIGH_RID) {
+			printf("MEDIUM_INTEGRITY\n");
+		}
+
+		if (starting_intlvl >= SECURITY_MANDATORY_HIGH_RID)
+			printf("HIGH_INTEGRITY\n");
+
+		// close handlers
+		CloseHandle(hToken);
+		CloseHandle(hProcess);
 	}
-
-	if (starting_intlvl >= SECURITY_MANDATORY_HIGH_RID)
-		printf("HIGH_INTEGRITY\n");
-
-	// TokenSessionId
-	DWORD starting_ses_id = GetSessionID(hToken);
-	printf("SessionID: %lu\n", starting_ses_id);
-
-	// close handlers
-	CloseHandle(hToken);
-	CloseHandle(hProcess);
 
 	std::cout << "[+] Start monitoring!\n";
 	bool is_modified = false;
@@ -330,12 +365,12 @@ int main(int argc, char* argv[])
 			printf("[!] UserAndGroups changed!\n");
 			is_modified = true;
 		}
-		if (GetIntegrityLevel(hToken) != starting_intlvl) {
-			printf("[!] Integrity level changed!\n");
+		if (CapabilitiesCount(hToken) != starting_cap_count) {
+			printf("[!] Capabilities changed!\n");
 			is_modified = true;
 		}
-		if (GetSessionID(hToken) != starting_ses_id) {
-			printf("[!] Session id changed\n!");
+		if (GetIntegrityLevel(hToken) < starting_intlvl) {
+			printf("[!] Integrity level changed!\n");
 			is_modified = true;
 		}
 		// close handlers
