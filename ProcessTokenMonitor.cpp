@@ -230,7 +230,7 @@ int main(int argc, char* argv[])
 		std::cout << "Provide argument via startup arguments\n"
 			<< "-p  pid to monitor\n"
 			<< "-t  sleep time between checks (default 10 s) \n"
-			<< "--defender  find and monitor MsMpEng.exe process\n";
+			<< "--defender  find and monitor MsMpEng.exe process, use default values\n";
 		ExitProcess(-1);
 	}
 
@@ -348,12 +348,11 @@ int main(int argc, char* argv[])
 	}
 
 	std::cout << "[+] Start monitoring!\n";
+	HANDLE new_hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
 	bool is_modified = false;
 	while (TRUE)
 	{
 		Sleep(time_to_sleep);
-		HANDLE new_hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
-
 		OpenProcessToken(new_hProcess, TOKEN_QUERY, &hToken);
 		if (CheckWindowsPrivilege(hToken, SE_DEBUG_NAME) != starting_is_debug or starting_audit != CheckWindowsPrivilege(hToken, SE_AUDIT_NAME) or
 			starting_restore != CheckWindowsPrivilege(hToken, SE_RESTORE_NAME) or starting_security != CheckWindowsPrivilege(hToken, SE_SECURITY_NAME)
@@ -374,11 +373,11 @@ int main(int argc, char* argv[])
 			is_modified = true;
 		}
 		// close handlers
-		CloseHandle(new_hProcess);
 		CloseHandle(hToken);
 
 		if (is_modified) {
 			printf("[!][!] Attack detected! [!][!]\n");
+			CloseHandle(new_hProcess);
 			ExitProcess(1);
 		}
 		else
