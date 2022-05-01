@@ -25,6 +25,12 @@ BOOL WINAPI consoleHandler(DWORD signal) {
 	return TRUE;
 }
 
+template<typename T>
+typename std::enable_if<std::is_same<T, typename std::remove_extent<T>::type[]>::value, std::unique_ptr<T>>::type
+make_unique(size_t n) {
+	return std::unique_ptr<T>(new typename std::remove_extent<T>::type[n]());
+}
+
 BOOL EnablePrivilege(LPCWSTR privilege) {
 	LUID privLuid;
 	if (!LookupPrivilegeValue(NULL, privilege, &privLuid)) {
@@ -190,7 +196,10 @@ DWORD GetIntegrityLevel(HANDLE hToken) {
 	DWORD dwSize = 0, dwResult = 0;
 	DWORD token_info_length = 256;
 
-	auto token_label_bytes = std::make_unique<char[]>(token_info_length);
+	//auto token_label_bytes = std::make_unique<char[]>(token_info_length);
+	//TOKEN_MANDATORY_LABEL* token_label = reinterpret_cast<TOKEN_MANDATORY_LABEL*>(token_label_bytes.get());
+	// Fix for old 
+	auto token_label_bytes = make_unique<char[]>(token_info_length);
 	TOKEN_MANDATORY_LABEL* token_label = reinterpret_cast<TOKEN_MANDATORY_LABEL*>(token_label_bytes.get());
 
 	if (!GetTokenInformation(hToken, TokenIntegrityLevel, token_label, token_info_length, &token_info_length))
@@ -354,9 +363,9 @@ int main(int argc, char* argv[])
 	{
 		Sleep(time_to_sleep);
 		OpenProcessToken(new_hProcess, TOKEN_QUERY, &hToken);
-		if (CheckWindowsPrivilege(hToken, SE_DEBUG_NAME) != starting_is_debug or starting_audit != CheckWindowsPrivilege(hToken, SE_AUDIT_NAME) or
-			starting_restore != CheckWindowsPrivilege(hToken, SE_RESTORE_NAME) or starting_security != CheckWindowsPrivilege(hToken, SE_SECURITY_NAME)
-			or starting_impersonate != CheckWindowsPrivilege(hToken, SE_IMPERSONATE_NAME)) {
+		if (CheckWindowsPrivilege(hToken, SE_DEBUG_NAME) != starting_is_debug || starting_audit != CheckWindowsPrivilege(hToken, SE_AUDIT_NAME) ||
+			starting_restore != CheckWindowsPrivilege(hToken, SE_RESTORE_NAME) || starting_security != CheckWindowsPrivilege(hToken, SE_SECURITY_NAME)
+			|| starting_impersonate != CheckWindowsPrivilege(hToken, SE_IMPERSONATE_NAME)) {
 			printf("[!] Privileges changed!\n");
 			is_modified = true;
 		}
