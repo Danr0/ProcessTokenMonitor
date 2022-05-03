@@ -108,7 +108,6 @@ DWORD GetProcessIdByName(char* ProcName) {
 			{
 				DWORD pid = entry.th32ProcessID;
 				CloseHandle(snapshot);
-				//CloseHandle(hProcess);
 				return pid;
 			}
 		}
@@ -153,10 +152,15 @@ int GetUserAndGroupsCount(HANDLE hToken)
 	// Call GetTokenInformation again to get the group information.
 	BOOL res = GetTokenInformation(hToken, TokenGroups, pGroupInfo, dwSize, &dwSize);
 	if (res && pGroupInfo != nullptr)
-		return pGroupInfo->GroupCount;
+	{
+		int return_count = pGroupInfo->GroupCount;
+		GlobalFree(pGroupInfo);
+		return return_count;
+	}
 	else 
 	{
 		printf("[-] GetTokenInformation Error %u\n", GetLastError());
+		GlobalFree(pGroupInfo);
 		return 0;
 	}
 		
@@ -182,10 +186,15 @@ int CapabilitiesCount(HANDLE hToken)
 	// Call GetTokenInformation again to get the group information.
 	BOOL res = GetTokenInformation(hToken, TokenCapabilities, pGroupInfo, dwSize, &dwSize);
 	if (res && pGroupInfo != nullptr)
-		return pGroupInfo->GroupCount;
+	{
+		int return_count = pGroupInfo->GroupCount;
+		GlobalFree(pGroupInfo);
+		return return_count;
+	}
 	else
 	{
 		printf("[-] GetTokenInformation Error %u\n", GetLastError());
+		GlobalFree(pGroupInfo);
 		return 0;
 	}
 
@@ -194,13 +203,21 @@ int CapabilitiesCount(HANDLE hToken)
 DWORD GetIntegrityLevel(HANDLE hToken) {
 	// Integrity check
 	DWORD dwSize = 0, dwResult = 0;
-	DWORD token_info_length = 256;
+	DWORD token_info_length = 0;
+	TOKEN_MANDATORY_LABEL* token_label = NULL;
 
-	//auto token_label_bytes = std::make_unique<char[]>(token_info_length);
-	//TOKEN_MANDATORY_LABEL* token_label = reinterpret_cast<TOKEN_MANDATORY_LABEL*>(token_label_bytes.get());
-	// Fix for old 
-	auto token_label_bytes = make_unique<char[]>(token_info_length);
-	TOKEN_MANDATORY_LABEL* token_label = reinterpret_cast<TOKEN_MANDATORY_LABEL*>(token_label_bytes.get());
+	if (!GetTokenInformation(hToken, TokenIntegrityLevel, NULL, 0, &token_info_length))
+	{
+		
+		dwResult = GetLastError();
+		if (dwResult != ERROR_INSUFFICIENT_BUFFER) {
+			printf("[-] GetTokenInformation Error %u\n", dwResult);
+		}
+	}
+
+	token_label = (TOKEN_MANDATORY_LABEL*)GlobalAlloc(LPTR, token_info_length);
+
+	
 
 	if (!GetTokenInformation(hToken, TokenIntegrityLevel, token_label, token_info_length, &token_info_length))
 	{
@@ -208,15 +225,23 @@ DWORD GetIntegrityLevel(HANDLE hToken) {
 		if (dwResult != ERROR_INSUFFICIENT_BUFFER) {
 			printf("[-] GetTokenInformation Error %u\n", dwResult);
 		}
-		printf("UNTRUSTED_INTEGRITY\n");
-		return SECURITY_MANDATORY_UNTRUSTED_RID;
 	}
 
-	DWORD integrity_level = *::GetSidSubAuthority(
-		token_label->Label.Sid, static_cast<DWORD>(*::GetSidSubAuthorityCount(token_label->Label.Sid) - 1));
+	if (token_label == NULL)
+	{
+		printf("[-] Token Label Error \n");
+		return SECURITY_MANDATORY_UNTRUSTED_RID;
+	}
+	else
+	{
+		DWORD integrity_level = *::GetSidSubAuthority(
+			token_label->Label.Sid, static_cast<DWORD>(*::GetSidSubAuthorityCount(token_label->Label.Sid) - 1));
 
-	return integrity_level;
+		GlobalFree(token_label);
 
+		return integrity_level;
+	}
+	
 };
 
 
@@ -256,13 +281,6 @@ int main(int argc, char* argv[])
 		time_to_sleep = atoi(arg_time);
 	}
 
-	// Check args
-	if (!cmdOptionExists(argv, argv + argc, "-p") && !cmdOptionExists(argv, argv + argc, "--defender"))
-	{
-		std::cout << "[!] No require -p or --defender arguments\n";
-		ExitProcess(-1);
-	}
-
 	DWORD pid;
 	// If no pid provided, get by name
 	if (!cmdOptionExists(argv, argv + argc, "-p"))
@@ -288,7 +306,8 @@ int main(int argc, char* argv[])
 	HANDLE hToken;
 
 	//Defender default attributes
-	if (cmdOptionExists(argv, argv + argc, "--defender"))
+	if (cmdOptionExists(argv, argv + argc, "--defender") 
+		|| (!cmdOptionExists(argv, argv + argc, "-p") && !cmdOptionExists(argv, argv + argc, "--defender")) )
 	{
 		starting_is_debug = TRUE;
 		starting_impersonate = TRUE;
