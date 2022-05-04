@@ -1,5 +1,3 @@
-// detecter.cpp : This file contains the 'main' function. Program execution begins and ends there.
-//
 #include <iostream>
 #include <stdio.h>
 #include <iostream>
@@ -15,6 +13,106 @@
 #include <string>
 #include <comdef.h>
 
+void PrintHeaderMessage()
+{
+	std::cout << "***  Monitor programm token  ***\n";
+	std::cout << "*******   Made by Danr0  *******\n";
+}
+
+char* getCmdOption(char** begin, char** end, const std::string& option)
+{
+	char** itr = std::find(begin, end, option);
+	if (itr != end && ++itr != end)
+	{
+		return *itr;
+	}
+	return 0;
+}
+
+bool cmdOptionExists(char** begin, char** end, const std::string& option)
+{
+	return std::find(begin, end, option) != end;
+}
+
+int GetTimeOptions(int argc, char* argv[])
+{
+	// Set time to sleep, default 1s
+	int time_to_sleep = 10000; // default value = 10s
+	if (cmdOptionExists(argv, argv + argc, "-t"))
+	{
+		char* arg_time = getCmdOption(argv, argv + argc, "-t");
+		if (arg_time == nullptr)
+		{
+			printf("Invalid -t argumet");
+			ExitProcess(-1);
+		}
+		time_to_sleep = atoi(arg_time);
+	}
+	return time_to_sleep;
+}
+
+void HelpOption(int argc, char* argv[])
+{
+	// Output help and exit
+	if (cmdOptionExists(argv, argv + argc, "-h"))
+	{
+		std::cout << "Provide argument via startup arguments\n"
+			<< "-p  pid to monitor\n"
+			<< "-t  sleep time between checks (default 10 s) \n"
+			<< "--defender  find and monitor MsMpEng.exe process, use default values\n";
+		ExitProcess(-1);
+	}
+}
+
+DWORD GetProcessIdByName(char* ProcName) {
+	PROCESSENTRY32 entry;
+	entry.dwSize = sizeof(PROCESSENTRY32);
+
+	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
+
+	if (Process32First(snapshot, &entry) == TRUE)
+	{
+		while (Process32Next(snapshot, &entry) == TRUE)
+		{
+			const WCHAR* tmp_wc = entry.szExeFile;
+			_bstr_t tmp_wc2(tmp_wc);
+			const char* exec_filename = tmp_wc2;
+			if (_stricmp(exec_filename, ProcName) == 0)
+			{
+				DWORD pid = entry.th32ProcessID;
+				CloseHandle(snapshot);
+				return pid;
+			}
+		}
+	}
+	printf("[-] ERROR: can't find process %s\n", ProcName);
+	ExitProcess(-1);
+
+}
+
+DWORD GetPidOption(int argc, char* argv[])
+{
+	DWORD pid;
+	// If no pid provided, get by name
+	if (!cmdOptionExists(argv, argv + argc, "-p"))
+	{
+		pid = GetProcessIdByName((char*)"MsMpEng.exe");
+	}
+	else
+	{
+		char* pid_str = getCmdOption(argv, argv + argc, "-p");
+		if (pid_str == nullptr)
+		{
+			printf("Invalid -p argumet");
+			ExitProcess(-1);
+		}
+		pid = strtoul(pid_str, NULL, 10);
+
+	}
+	printf("Target PID: %d\n", pid);
+	return pid;
+}
+
 BOOL WINAPI consoleHandler(DWORD signal) {
 
 	if (signal == CTRL_C_EVENT)
@@ -25,11 +123,6 @@ BOOL WINAPI consoleHandler(DWORD signal) {
 	return TRUE;
 }
 
-template<typename T>
-typename std::enable_if<std::is_same<T, typename std::remove_extent<T>::type[]>::value, std::unique_ptr<T>>::type
-make_unique(size_t n) {
-	return std::unique_ptr<T>(new typename std::remove_extent<T>::type[n]());
-}
 
 BOOL EnablePrivilege(LPCWSTR privilege) {
 	LUID privLuid;
@@ -75,47 +168,6 @@ void contextCheck() {
 	}
 }
 
-char* getCmdOption(char** begin, char** end, const std::string& option)
-{
-	char** itr = std::find(begin, end, option);
-	if (itr != end && ++itr != end)
-	{
-		return *itr;
-	}
-	return 0;
-}
-
-bool cmdOptionExists(char** begin, char** end, const std::string& option)
-{
-	return std::find(begin, end, option) != end;
-}
-
-
-DWORD GetProcessIdByName(char* ProcName) {
-	PROCESSENTRY32 entry;
-	entry.dwSize = sizeof(PROCESSENTRY32);
-
-	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
-
-	if (Process32First(snapshot, &entry) == TRUE)
-	{
-		while (Process32Next(snapshot, &entry) == TRUE)
-		{
-			const WCHAR* tmp_wc = entry.szExeFile;
-			_bstr_t tmp_wc2(tmp_wc);
-			const char* exec_filename = tmp_wc2;
-			if (_stricmp(exec_filename, ProcName) == 0)
-			{
-				DWORD pid = entry.th32ProcessID;
-				CloseHandle(snapshot);
-				return pid;
-			}
-		}
-	}
-	printf("[-] ERROR: can't find process %s\n", ProcName);
-	ExitProcess(-1);
-	
-}
 
 BOOL CheckWindowsPrivilege(HANDLE hToken, const TCHAR* Privilege)
 {
@@ -144,12 +196,11 @@ int GetUserAndGroupsCount(HANDLE hToken)
 		dwResult = GetLastError();
 		if (dwResult != ERROR_INSUFFICIENT_BUFFER) {
 			printf("[-] GetTokenInformation Error %u\n", dwResult);
+			ExitProcess(-1);
 		}
 	}
-	// Allocate the buffer.
 	pGroupInfo = (PTOKEN_GROUPS)GlobalAlloc(GPTR, dwSize);
 
-	// Call GetTokenInformation again to get the group information.
 	BOOL res = GetTokenInformation(hToken, TokenGroups, pGroupInfo, dwSize, &dwSize);
 	if (res && pGroupInfo != nullptr)
 	{
@@ -178,12 +229,11 @@ int CapabilitiesCount(HANDLE hToken)
 		dwResult = GetLastError();
 		if (dwResult != ERROR_INSUFFICIENT_BUFFER) {
 			printf("[-] GetTokenInformation Error %u\n", dwResult);
+			ExitProcess(-1);
 		}
 	}
-	// Allocate the buffer.
 	pGroupInfo = (PTOKEN_GROUPS)GlobalAlloc(GPTR, dwSize);
 
-	// Call GetTokenInformation again to get the group information.
 	BOOL res = GetTokenInformation(hToken, TokenCapabilities, pGroupInfo, dwSize, &dwSize);
 	if (res && pGroupInfo != nullptr)
 	{
@@ -212,31 +262,47 @@ DWORD GetIntegrityLevel(HANDLE hToken) {
 		dwResult = GetLastError();
 		if (dwResult != ERROR_INSUFFICIENT_BUFFER) {
 			printf("[-] GetTokenInformation Error %u\n", dwResult);
+			ExitProcess(-1);
 		}
 	}
 
 	token_label = (TOKEN_MANDATORY_LABEL*)GlobalAlloc(LPTR, token_info_length);
-
-	
 
 	if (!GetTokenInformation(hToken, TokenIntegrityLevel, token_label, token_info_length, &token_info_length))
 	{
 		dwResult = GetLastError();
 		if (dwResult != ERROR_INSUFFICIENT_BUFFER) {
 			printf("[-] GetTokenInformation Error %u\n", dwResult);
+			ExitProcess(-1);
 		}
 	}
 
 	if (token_label == NULL)
 	{
 		printf("[-] Token Label Error \n");
+		GlobalFree(token_label);
 		return SECURITY_MANDATORY_UNTRUSTED_RID;
 	}
 	else
 	{
-		DWORD integrity_level = *::GetSidSubAuthority(
-			token_label->Label.Sid, static_cast<DWORD>(*::GetSidSubAuthorityCount(token_label->Label.Sid) - 1));
+		UCHAR subAuthorityCount = *::GetSidSubAuthorityCount(token_label->Label.Sid);
+		if (!subAuthorityCount)
+		{ 
+			dwResult = GetLastError();
+			if (dwResult != ERROR_INSUFFICIENT_BUFFER) {
+				printf("[-] GetSidSubAuthorityCount Error %u\n", dwResult);
+				ExitProcess(-1);
+			}
+		}
 
+		DWORD integrity_level = *::GetSidSubAuthority(token_label->Label.Sid, static_cast<DWORD>(subAuthorityCount - 1));
+		if (!integrity_level)
+		{
+			dwResult = GetLastError();
+			if (dwResult != ERROR_INSUFFICIENT_BUFFER) {
+				return SECURITY_MANDATORY_UNTRUSTED_RID;
+			}
+		}
 		GlobalFree(token_label);
 
 		return integrity_level;
@@ -245,10 +311,10 @@ DWORD GetIntegrityLevel(HANDLE hToken) {
 };
 
 
+
 int main(int argc, char* argv[])
 {
-	std::cout << "***  Monitor programm token  ***\n";
-	std::cout << "*******   Made by Danr0  *******\n";
+	PrintHeaderMessage();
 
 	// Check for admin context
 	contextCheck();
@@ -258,57 +324,21 @@ int main(int argc, char* argv[])
 		printf("[-] ERROR: Could not set control handler");
 	}
 
-	// Output help and exit
-	if (cmdOptionExists(argv, argv + argc, "-h"))
-	{
-		std::cout << "Provide argument via startup arguments\n"
-			<< "-p  pid to monitor\n"
-			<< "-t  sleep time between checks (default 10 s) \n"
-			<< "--defender  find and monitor MsMpEng.exe process, use default values\n";
-		ExitProcess(-1);
-	}
-
-	// Set time to sleep, default 1s
-	int time_to_sleep = 10000; // default value
-	if (cmdOptionExists(argv, argv + argc, "-t"))
-	{
-		char* arg_time = getCmdOption(argv, argv + argc, "-t");
-		if (arg_time == nullptr)
-		{
-			printf("Invalid -t argumet");
-			ExitProcess(-1);
-		}
-		time_to_sleep = atoi(arg_time);
-	}
-
-	DWORD pid;
-	// If no pid provided, get by name
-	if (!cmdOptionExists(argv, argv + argc, "-p"))
-	{
-		pid = GetProcessIdByName((char*)"MsMpEng.exe");
-	}
-	else 
-	{
-		char* pid_str = getCmdOption(argv, argv + argc, "-p");
-		if (pid_str == nullptr)
-		{
-			printf("Invalid -p argumet");
-			ExitProcess(-1);
-		}
-		pid = strtoul(pid_str, NULL, 10);
-		
-	}
-	printf("Target PID: %d\n", pid);
-
+	// Get cmd options
+	HelpOption(argc, argv);
+	int time_to_sleep = GetTimeOptions(argc, argv);
+	DWORD pid = GetPidOption(argc, argv);
+	BOOL is_defender_target = (cmdOptionExists(argv, argv + argc, "--defender")
+		|| (!cmdOptionExists(argv, argv + argc, "-p") && !cmdOptionExists(argv, argv + argc, "--defender")));
+	
 	BOOL starting_is_debug, starting_audit, starting_impersonate, starting_security, starting_restore;
 	int starting_count, starting_cap_count;
 	DWORD starting_intlvl;
 	HANDLE hToken;
-
-	//Defender default attributes
-	if (cmdOptionExists(argv, argv + argc, "--defender") 
-		|| (!cmdOptionExists(argv, argv + argc, "-p") && !cmdOptionExists(argv, argv + argc, "--defender")) )
+	
+	if (is_defender_target)
 	{
+		//Defender default attributes
 		starting_is_debug = TRUE;
 		starting_impersonate = TRUE;
 		starting_security = TRUE;
@@ -355,19 +385,16 @@ int main(int argc, char* argv[])
 
 		// IntegrityLevel
 		starting_intlvl = GetIntegrityLevel(hToken);
-		printf("Inetgrity: %lu\n", starting_intlvl);
+		printf("Inetgrity: %lu - ", starting_intlvl);
 		if (starting_intlvl < SECURITY_MANDATORY_LOW_RID)
 			printf("UNTRUSTED_INTEGRITY\n");
-
-		if (starting_intlvl < SECURITY_MANDATORY_MEDIUM_RID)
+		else if (starting_intlvl < SECURITY_MANDATORY_MEDIUM_RID)
 			printf("LOW_INTEGRITY\n");
-
-		if (starting_intlvl >= SECURITY_MANDATORY_MEDIUM_RID &&
+		else if (starting_intlvl >= SECURITY_MANDATORY_MEDIUM_RID &&
 			starting_intlvl < SECURITY_MANDATORY_HIGH_RID) {
 			printf("MEDIUM_INTEGRITY\n");
 		}
-
-		if (starting_intlvl >= SECURITY_MANDATORY_HIGH_RID)
+		else if (starting_intlvl >= SECURITY_MANDATORY_HIGH_RID)
 			printf("HIGH_INTEGRITY\n");
 
 		// close handlers
